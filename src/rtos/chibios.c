@@ -52,13 +52,11 @@ struct chibios_chdebug {
 	uint8_t   cf_off_newer;           /**< @brief Offset of @p p_newer field. */
 	uint8_t   cf_off_older;           /**< @brief Offset of @p p_older field. */
 	uint8_t   cf_off_name;            /**< @brief Offset of @p p_name field.  */
-	uint8_t   cf_off_stklimit;        /**< @brief Offset of @p p_stklimit
-												field.                        */
+	uint8_t   cf_off_stklimit;        /**< @brief Offset of @p p_stklimitfield.*/
 	uint8_t   cf_off_state;           /**< @brief Offset of @p p_state field. */
 	uint8_t   cf_off_flags;           /**< @brief Offset of @p p_flags field. */
 	uint8_t   cf_off_refs;            /**< @brief Offset of @p p_refs field.  */
-	uint8_t   cf_off_preempt;         /**< @brief Offset of @p p_preempt
-												field.                        */
+	uint8_t   cf_off_preempt;         /**< @brief Offset of @p p_preempt field.*/
 	uint8_t   cf_off_time;            /**< @brief Offset of @p p_time field.  */
 };
 
@@ -133,7 +131,7 @@ enum chibios_symbol_values {
 
 static symbol_table_elem_t chibios_symbol_list[] = {
 	{ "rlist", 0, true},		/* Thread ready list */
-	{ "ch", 0, true},			/* System data structure */
+	{ "ch0", 0, true},			/* System data structure */
 	{ "ch_debug", 0, false},	/* Memory Signature containing offsets of fields in rlist */
 	{ NULL, 0, false}
 };
@@ -303,7 +301,7 @@ static int chibios_update_threads(struct rtos *rtos)
 	/* ChibiOS does not save the current thread count. We have to first
 	 * parse the double linked thread list to check for errors and the number of
 	 * threads. */
-	const uint32_t rlist = rtos->symbols[CHIBIOS_VAL_RLIST].address ?
+	uint32_t rlist = rtos->symbols[CHIBIOS_VAL_RLIST].address ?
 		rtos->symbols[CHIBIOS_VAL_RLIST].address :
 		rtos->symbols[CHIBIOS_VAL_CH].address + CH_RLIST_OFFSET /* ChibiOS3 */;
 	const struct chibios_chdebug *signature = param->signature;
@@ -311,11 +309,16 @@ static int chibios_update_threads(struct rtos *rtos)
 	uint32_t previous;
 	uint32_t older;
 
-	current = rlist;
-	previous = rlist;
+	target_read_u32(rtos->target, rlist + 12, &current);
+	previous = current;
+	rlist = current;
+
+	LOG_INFO("current_init: 0x%08" PRIx32, current);
 	while (1) {
 		retval = target_read_u32(rtos->target,
 								 current + signature->cf_off_newer, &current);
+		current -= signature->cf_off_newer;
+		LOG_INFO("current: 0x%08" PRIx32, current);
 		if (retval != ERROR_OK) {
 			LOG_ERROR("Could not read next ChibiOS thread");
 			return retval;
@@ -331,6 +334,8 @@ static int chibios_update_threads(struct rtos *rtos)
 		/* Fetch previous thread in the list as a integrity check. */
 		retval = target_read_u32(rtos->target,
 								 current + signature->cf_off_older, &older);
+		older -= signature->cf_off_newer;
+		LOG_INFO("older: 0x%08" PRIx32, older);
 		if ((retval != ERROR_OK) || (older == 0) || (older != previous)) {
 			LOG_ERROR("ChibiOS registry integrity check failed, "
 						"double linked list violation");
@@ -386,6 +391,7 @@ static int chibios_update_threads(struct rtos *rtos)
 
 		retval = target_read_u32(rtos->target,
 								 current + signature->cf_off_newer, &current);
+		current -= signature->cf_off_newer;
 		if (retval != ERROR_OK) {
 			LOG_ERROR("Could not read next ChibiOS thread");
 			return -6;
