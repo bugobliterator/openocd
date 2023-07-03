@@ -48,6 +48,25 @@ struct chibios_chdebug {
 	uint8_t   cf_off_preempt;         /**< @brief Offset of @p p_preempt
 												field.                        */
 	uint8_t   cf_off_time;            /**< @brief Offset of @p p_time field.  */
+
+	// For RT7
+	uint8_t   off_reserved[4];
+	uint8_t   intctxsize;             /**< @brief Size of a @p port_intctx.   */
+	uint8_t   intervalsize;           /**< @brief Size of a @p sysinterval_t. */
+	uint8_t   instancesnum;           /**< @brief Number of instances.        */
+	uint8_t   off_sys_state;          /**< @brief Offset of @p state field.   */
+	uint8_t   off_sys_instances;      /**< @brief Offset of @p instances array
+												field.                      */
+	uint8_t   off_sys_reglist;        /**< @brief Offset of @p reglist field. */
+	uint8_t   off_sys_rfcu;           /**< @brief Offset of @p rfcu field.    */
+	uint8_t   off_sys_reserved[4];
+	uint8_t   off_inst_rlist_current; /**< @brief Offset of @p rlist.current
+												field.                      */
+	uint8_t   off_inst_rlist;         /**< @brief Offset of @p rlist field.   */
+	uint8_t   off_inst_vtlist;        /**< @brief Offset of @p vtlist field.  */
+	uint8_t   off_inst_reglist;       /**< @brief Offset of @p reglist field. */
+	uint8_t   off_inst_core_id;       /**< @brief Offset of @p core_id field. */
+	uint8_t   off_inst_rfcu;          /**< @brief Offset of @p rfcu field.    */
 };
 
 #define GET_CH_KERNEL_MAJOR(coded_version) ((coded_version >> 11) & 0x1f)
@@ -95,6 +114,8 @@ static int chibios_update_threads(struct rtos *rtos);
 static int chibios_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 		struct rtos_reg **reg_list, int *num_regs);
 static int chibios_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[]);
+// Added for RT7
+static char* get_thread_name(uint32_t thread, const struct chibios_chdebug *signature, struct rtos *rtos);
 
 const struct rtos_type chibios_rtos = {
 	.name = "chibios",
@@ -115,12 +136,23 @@ const struct rtos_type chibios_rtos = {
 enum chibios_symbol_values {
 	CHIBIOS_VAL_RLIST = 0,
 	CHIBIOS_VAL_CH = 1,
-	CHIBIOS_VAL_CH_DEBUG = 2
+	// Added for RT7
+	CHIBIOS_VAL_CH0 = 2,
+	CHIBIOS_VAL_CH_DEBUG = 3
+};
+
+// Added for RT7 get_thread method
+enum thread_type {
+	FIRST,
+	LAST,
+	PREV,
+	NEXT
 };
 
 static struct symbol_table_elem chibios_symbol_list[] = {
 	{ "rlist", 0, true},		/* Thread ready list */
 	{ "ch", 0, true},			/* System data structure */
+	{ "ch0", 0, true},			/* System data structure RT7 */
 	{ "ch_debug", 0, false},	/* Memory Signature containing offsets of fields in rlist */
 	{ NULL, 0, false}
 };
@@ -253,6 +285,65 @@ static int chibios_update_stacking(struct rtos *rtos)
 	return -1;
 }
 
+// Added/extracted for RT7
+static char* get_thread_name(uint32_t thread, const struct chibios_chdebug *signature, struct rtos *rtos)
+{
+	uint32_t name_ptr = 0;
+	// static allocation so we can return it
+	static char tmp_str[CHIBIOS_THREAD_NAME_STR_SIZE];
+
+	/* read the name pointer */
+	int retval = target_read_u32(rtos->target, thread + signature->cf_off_name, &name_ptr);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Could not read ChibiOS thread name pointer from target");
+		return NULL;
+	}
+
+	// null name is valid according to ChibiOS docs
+	if(!name_ptr)
+		return NULL;
+
+	/* Read the thread name */
+	retval = target_read_buffer(rtos->target, name_ptr, CHIBIOS_THREAD_NAME_STR_SIZE, (uint8_t *)&tmp_str);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Error reading thread name from ChibiOS target");
+		return NULL;
+	}
+	tmp_str[CHIBIOS_THREAD_NAME_STR_SIZE - 1] = '\x00';
+	if (tmp_str[0] == '\x00')
+		strcpy(tmp_str, "No Name");
+	return tmp_str;
+}
+
+// Added for RT7
+static uint32_t get_thread(uint32_t current, const struct chibios_chdebug *signature, struct rtos *rtos, enum thread_type type)
+{
+	// get offset for FIRST, NEXT, PREV or LAST thread (RT7 specific)
+	uint32_t next_addr = type == NEXT ? current + signature->cf_off_newer :
+								     type == PREV ? current + signature->cf_off_older :
+									 type == FIRST ? rtos->symbols[CHIBIOS_VAL_CH0].address + signature->off_inst_reglist :
+								     // for last thread we add ptr size to get prev field
+									 rtos->symbols[CHIBIOS_VAL_CH0].address + signature->off_inst_reglist + signature->ch_ptrsize;
+
+	// for log output
+	char* log_tag = type == NEXT ? "next" : type == PREV ? "prev" : type == FIRST ? "first" : "last";
+
+	uint32_t thread;
+	int retval = target_read_u32(rtos->target, next_addr, &thread);
+	if (retval != ERROR_OK || thread == 0) {
+		LOG_ERROR("Could not read %s thread", log_tag);
+		return 0;
+	}
+
+	// for last thread we return unadjusted 'last' sentinel and do not log since is not a valid thread_t
+	if(thread != rtos->symbols[CHIBIOS_VAL_CH0].address + signature->off_inst_reglist) {
+		// adjust queue item to thread_t
+		thread -= signature->cf_off_newer;
+		LOG_INFO("%s thread name: %s, addr: %d", log_tag, get_thread_name(thread, signature, rtos), thread);
+	}
+	return thread;
+}
+
 static int chibios_update_threads(struct rtos *rtos)
 {
 	int retval;
@@ -284,46 +375,40 @@ static int chibios_update_threads(struct rtos *rtos)
 	/* ChibiOS does not save the current thread count. We have to first
 	 * parse the double linked thread list to check for errors and the number of
 	 * threads. */
-	const uint32_t rlist = rtos->symbols[CHIBIOS_VAL_RLIST].address ?
-		rtos->symbols[CHIBIOS_VAL_RLIST].address :
-		rtos->symbols[CHIBIOS_VAL_CH].address + CH_RLIST_OFFSET /* ChibiOS3 */;
 	const struct chibios_chdebug *signature = param->signature;
-	uint32_t current;
-	uint32_t previous;
-	uint32_t older;
 
-	current = rlist;
-	previous = rlist;
-	while (1) {
-		retval = target_read_u32(rtos->target,
-								 current + signature->cf_off_newer, &current);
-		if (retval != ERROR_OK) {
-			LOG_ERROR("Could not read next ChibiOS thread");
-			return retval;
-		}
-		/* Could be NULL if the kernel is not initialized yet or if the
-		 * registry is corrupted. */
-		if (current == 0) {
-			LOG_ERROR("ChibiOS registry integrity check failed, NULL pointer");
+	// RT7 first thread is read using reglist via ch_debug
+	uint32_t current = get_thread(0, signature, rtos, FIRST);
+	uint32_t previous = current;
+	uint32_t last = rtos->symbols[CHIBIOS_VAL_CH0].address + signature->off_inst_reglist;
 
-			rtos_valid = 0;
-			break;
-		}
-		/* Fetch previous thread in the list as a integrity check. */
-		retval = target_read_u32(rtos->target,
-								 current + signature->cf_off_older, &older);
-		if ((retval != ERROR_OK) || (older == 0) || (older != previous)) {
-			LOG_ERROR("ChibiOS registry integrity check failed, "
-						"double linked list violation");
-			rtos_valid = 0;
-			break;
-		}
-		/* Check for full iteration of the linked list. */
-		if (current == rlist)
-			break;
+	do
+	{
 		tasks_found++;
+		current = get_thread(current, signature, rtos, NEXT);
+		if(current == 0) {
+			rtos_valid = 0;
+			break;
+		}
+
+		// NOTE: special case for RT7 end of list
+		uint32_t older = get_thread(current, signature, rtos, current == last ? LAST : PREV);
+		if(older == 0) {
+			rtos_valid = 0;
+			break;
+		}
+		if(older !=previous) {
+			LOG_ERROR("ChibiOS registry integrity check failed, double linked list violation");
+			rtos_valid = 0;
+			break;
+		}
+
+		LOG_INFO("Verified ChibiOS Thread #%d", tasks_found);
 		previous = current;
 	}
+	// RT7 the last element points to reglist to signify end of the list
+	while(current != last);
+
 	if (!rtos_valid) {
 		/* No RTOS, there is always at least the current execution, though */
 		LOG_INFO("Only showing current execution because of a broken "
@@ -358,63 +443,37 @@ static int chibios_update_threads(struct rtos *rtos)
 		return -1;
 	}
 
+	// RT7 need to go back to start since we did not wrap on traversal
+	current = get_thread(0, signature, rtos, FIRST);
+
 	rtos->thread_count = tasks_found;
-	/* Loop through linked list. */
+	/* Loop through linked list. NOTE: we are already back at the  first_thread here */
 	struct thread_detail *curr_thrd_details = rtos->thread_details;
-	while (curr_thrd_details < rtos->thread_details + tasks_found) {
-		uint32_t name_ptr = 0;
-		char tmp_str[CHIBIOS_THREAD_NAME_STR_SIZE];
-
-		retval = target_read_u32(rtos->target,
-								 current + signature->cf_off_newer, &current);
-		if (retval != ERROR_OK) {
-			LOG_ERROR("Could not read next ChibiOS thread");
-			return -6;
-		}
-
-		/* Check for full iteration of the linked list. */
-		if (current == rlist)
-			break;
-
+	do
+	{
 		/* Save the thread pointer */
 		curr_thrd_details->threadid = current;
 
-		/* read the name pointer */
-		retval = target_read_u32(rtos->target,
-								 current + signature->cf_off_name, &name_ptr);
-		if (retval != ERROR_OK) {
-			LOG_ERROR("Could not read ChibiOS thread name pointer from target");
-			return retval;
-		}
-
-		/* Read the thread name */
-		retval = target_read_buffer(rtos->target, name_ptr,
-									CHIBIOS_THREAD_NAME_STR_SIZE,
-									(uint8_t *)&tmp_str);
-		if (retval != ERROR_OK) {
-			LOG_ERROR("Error reading thread name from ChibiOS target");
-			return retval;
-		}
-		tmp_str[CHIBIOS_THREAD_NAME_STR_SIZE - 1] = '\x00';
-
-		if (tmp_str[0] == '\x00')
-			strcpy(tmp_str, "No Name");
-
-		curr_thrd_details->thread_name_str = malloc(
-				strlen(tmp_str) + 1);
-		strcpy(curr_thrd_details->thread_name_str, tmp_str);
+	    char *tmp_str = get_thread_name(current, signature, rtos);
+	    // RT7 could have a null thread name according to ChibiOS docs
+	    if(tmp_str) {
+			curr_thrd_details->thread_name_str = malloc(
+					strlen(tmp_str) + 1);
+			strcpy(curr_thrd_details->thread_name_str, tmp_str);
+	    }
+	    else {
+	    	curr_thrd_details->thread_name_str = NULL;
+	    }
 
 		/* State info */
 		uint8_t thread_state;
 		const char *state_desc;
 
-		retval = target_read_u8(rtos->target,
-								current + signature->cf_off_state, &thread_state);
+		retval = target_read_u8(rtos->target, current + signature->cf_off_state, &thread_state);
 		if (retval != ERROR_OK) {
 			LOG_ERROR("Error reading thread state from ChibiOS target");
 			return retval;
 		}
-
 
 		if (thread_state < CHIBIOS_NUM_STATES)
 			state_desc = chibios_thread_states[thread_state];
@@ -430,17 +489,24 @@ static int chibios_update_threads(struct rtos *rtos)
 		curr_thrd_details->exists = true;
 
 		curr_thrd_details++;
+
+		// get next threads
+		current = get_thread(current, signature, rtos, NEXT);
+		if(current == 0) {
+			return ERROR_FAIL;
+		}
 	}
+	while(current !=last && curr_thrd_details < rtos->thread_details + tasks_found);
 
 	uint32_t current_thrd;
-	/* NOTE: By design, cf_off_name equals readylist_current_offset */
-	retval = target_read_u32(rtos->target,
-							 rlist + signature->cf_off_name,
+	// modified for RT7 offset
+	retval = target_read_u32(rtos->target, rtos->symbols[CHIBIOS_VAL_CH0].address + signature->off_inst_rlist_current,
 							 &current_thrd);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Could not read current Thread from ChibiOS target");
 		return retval;
 	}
+	LOG_INFO("Current thread name: %s, addr: %d", get_thread_name(current_thrd, signature, rtos), current_thrd);
 	rtos->current_thread = current_thrd;
 
 	return 0;
@@ -495,7 +561,9 @@ static bool chibios_detect_rtos(struct target *target)
 {
 	if ((target->rtos->symbols) &&
 			((target->rtos->symbols[CHIBIOS_VAL_RLIST].address != 0) ||
-			 (target->rtos->symbols[CHIBIOS_VAL_CH].address != 0))) {
+			 (target->rtos->symbols[CHIBIOS_VAL_CH].address != 0) ||
+			 // Added CH0 for RT7+
+			 (target->rtos->symbols[CHIBIOS_VAL_CH0].address != 0))) {
 
 		if (target->rtos->symbols[CHIBIOS_VAL_CH_DEBUG].address == 0) {
 			LOG_INFO("It looks like the target may be running ChibiOS "
