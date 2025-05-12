@@ -320,10 +320,75 @@ jobs:
           name: openocd-linux-i686
           path: ${{ env.LINUX_I686_ARTIFACT_PATH }}
 
+  # macOS (Darwin) build job using Homebrew
+  package-darwin:
+    runs-on: macos-latest
+    needs: prepare-release-info
+    env:
+      BUILD_DIR: ../build
+      OPENOCD_TAG: ${{ needs.prepare-release-info.outputs.openocd_tag }}
+    steps:
+      - name: Install needed packages with Homebrew
+        run: |
+          brew update
+          # Install build tools
+          brew install autoconf automake libtool pkg-config texinfo
+          
+          # Install dependencies via Homebrew instead of manually building them
+          brew install libusb hidapi libftdi capstone
+          
+          # Install optional dependencies
+          brew install libusb-compat jimtcl
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: Bootstrap and Configure
+        run: |
+          ./bootstrap
+          
+          # Create build directory
+          mkdir -p $BUILD_DIR && cd $BUILD_DIR
+          # get absolute path to the build directory $BUILD_DIR
+          BUILD_DIR_ABS="$(cd $BUILD_DIR && pwd)"
+          
+          # Set PKG_CONFIG_PATH to include Homebrew paths
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Set CPPFLAGS and LDFLAGS for Homebrew dependencies
+          export CPPFLAGS="-I$(brew --prefix)/include"
+          export LDFLAGS="-L$(brew --prefix)/lib"
+          
+          # Configure with paths to Homebrew libraries
+          $GITHUB_WORKSPACE/configure \
+            --prefix=$BUILD_DIR_ABS/root/usr \
+            --enable-stlink \
+            --disable-amtjtagaccel
+      
+      - name: Build and Install
+        run: |
+          cd $BUILD_DIR
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          
+          # Prepare the artifact
+          cd root/usr
+          ARTIFACT="openocd-${OPENOCD_TAG}-darwin-x86_64.tar.gz"
+          tar -czf $ARTIFACT *
+          
+          mkdir -p $GITHUB_WORKSPACE/artifacts
+          cp $ARTIFACT $GITHUB_WORKSPACE/artifacts/
+          
+      - name: Upload Darwin Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: openocd-darwin-x86_64
+          path: artifacts/*.tar.gz
+
   # Final release job
   create-release:
     runs-on: ubuntu-latest
-    needs: [prepare-release-info, package-windows, package-linux-x86_64, package-linux-i686]
+    needs: [prepare-release-info, package-windows, package-linux-x86_64, package-linux-i686, package-darwin]
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -347,3 +412,4 @@ jobs:
           artifacts: "artifacts/**/*.tar.gz"
           prerelease: ${{ needs.prepare-release-info.outputs.is_pre_release == 'true' }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
