@@ -117,6 +117,16 @@ fi
 if [ -d $HIDAPI_SRC ] ; then
   mkdir -p $HIDAPI_BUILD_DIR
   cd $HIDAPI_BUILD_DIR
+  
+  # Set extra environment variables for hidapi to find libudev
+  if [[ "$HOST_TRIPLET" == *"linux"* ]]; then
+    if [[ "$HOST_TRIPLET" == *"x86_64"* ]]; then
+      EXTRA_FLAGS="CFLAGS=-I$SYSROOT/usr/include LDFLAGS=-L$SYSROOT/usr/lib/x86_64-linux-gnu"
+    elif [[ "$HOST_TRIPLET" == *"i686"* ]]; then
+      EXTRA_FLAGS="CFLAGS=-I$SYSROOT/usr/include LDFLAGS=-L$SYSROOT/usr/lib/i386-linux-gnu"
+    fi
+  fi
+  
   $HIDAPI_SRC/configure --build=`$HIDAPI_SRC/config.guess` --host=$HOST_TRIPLET \
     --with-sysroot=$SYSROOT --prefix=$PREFIX \
     $HIDAPI_CONFIG
@@ -150,6 +160,7 @@ if [ -d $CAPSTONE_SRC ] ; then
   mkdir -p $CAPSTONE_BUILD_DIR
   cd $CAPSTONE_BUILD_DIR
   cp -r $CAPSTONE_SRC/* .
+
   make install DESTDIR=$SYSROOT PREFIX=$PREFIX \
     CROSS="${HOST_TRIPLET}-" \
     $CAPSTONE_CONFIG
