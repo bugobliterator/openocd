@@ -173,12 +173,27 @@ jobs:
           sudo apt-get install autotools-dev autoconf automake libtool pkg-config cmake texinfo texlive libjim-dev libudev-dev
           if [[ "${{ matrix.arch }}" == "aarch64" ]]; then
             sudo dpkg --add-architecture arm64
-            # Configure sources to prevent arm64 package conflicts  
-            # Handle both old .list files and new .sources files (deb822 format)
-            sudo find /etc/apt/sources.list.d/ -name "*.sources" -exec sudo sed -i 's/^Architectures: .*/Architectures: amd64/' {} \;
-            sudo find /etc/apt/sources.list.d/ -name "*.list" -exec sudo sed -i 's/^deb \[/deb [arch=amd64,/' {} \;
-            sudo find /etc/apt/sources.list.d/ -name "*.list" -exec sudo sed -i 's/^deb http/deb [arch=amd64] http/' {} \;
-            sudo find /etc/apt/sources.list.d/ -name "*.list" -exec sudo sed -i 's/^deb https/deb [arch=amd64] https/' {} \;
+            # Configure sources to prevent arm64 package conflicts
+            echo "DEBUG: Before modifications:"
+            find /etc/apt/sources.list.d/ -name "*.sources" -exec echo "File: {}" \; -exec cat {} \;
+            # Completely disable Ubuntu default sources and create clean setup
+            sudo find /etc/apt/sources.list.d/ -name "*.sources" -exec sudo mv {} {}.disabled \;
+            # Create clean sources manually
+            sudo tee /etc/apt/sources.list.d/ubuntu-amd64.sources <<EOF
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu
+Suites: noble noble-updates
+Components: main universe
+Architectures: amd64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu  
+Suites: noble-security
+Components: main universe
+Architectures: amd64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
             # Add ports.ubuntu.com for arm64 packages only
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe multiverse restricted" | sudo tee /etc/apt/sources.list.d/arm64.list
             echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe multiverse restricted" | sudo tee -a /etc/apt/sources.list.d/arm64.list
