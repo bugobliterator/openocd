@@ -124,7 +124,7 @@ jobs:
           MAKE_JOBS: 2
           HOST: ${{ matrix.host }}
           LIBUSB1_CONFIG: --enable-static --disable-shared
-          LIBFTDI_CONFIG: -DSTATICLIBS=ON -DEXAMPLES=OFF -DFTDI_EEPROM=OFF
+          LIBFTDI_CONFIG: -DSTATICLIBS=ON -DEXAMPLES=OFF -DFTDI_EEPROM=OFF -DUSE_SYSTEM_LIBUSB=ON
           CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
           LIBJAYLINK_CONFIG: --enable-static --disable-shared
           JIMTCL_CONFIG: --with-ext=json --minimal --disable-ssl
