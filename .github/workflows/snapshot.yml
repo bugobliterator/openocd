@@ -8,52 +8,110 @@ name: OpenOCD Snapshot
 
 jobs:
   package:
-    runs-on: [ubuntu-18.04]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            host: x86_64-linux-gnu
+            packages: "gcc-x86-64-linux-gnu g++-x86-64-linux-gnu"
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: aarch64
+            host: aarch64-linux-gnu
+            packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+          # macOS builds
+          - runner: macos-13
+            platform: macos
+            arch: x86_64
+            host: x86_64-apple-darwin
+            packages: ""
+          - runner: macos-14
+            platform: macos
+            arch: arm64
+            host: aarch64-apple-darwin
+            packages: ""
+          # Windows builds
+          - runner: ubuntu-22.04
+            platform: windows
+            arch: x86_64
+            host: x86_64-w64-mingw32
+            packages: "gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64"
+          - runner: ubuntu-22.04
+            platform: windows
+            arch: aarch64
+            host: aarch64-w64-mingw32
+            packages: "gcc-mingw-w64 g++-mingw-w64 binutils-mingw-w64"
+          - runner: ubuntu-22.04
+            platform: windows
+            arch: i686
+            host: i686-w64-mingw32
+            packages: "gcc-mingw-w64-i686 g++-mingw-w64-i686"
     env:
       DL_DIR: ../downloads
       BUILD_DIR: ../build
     steps:
-      - name: Install needed packages
+      - name: Install needed packages (Linux/Windows cross-compile)
+        if: matrix.platform == 'linux' || matrix.platform == 'windows'
         run: |
           sudo apt-get update
-          sudo apt-get install autotools-dev autoconf automake libtool pkg-config cmake texinfo texlive g++-mingw-w64-i686
+          sudo apt-get install autotools-dev autoconf automake libtool pkg-config cmake texinfo texlive ${{ matrix.packages }}
+      - name: Install needed packages (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install autoconf automake libtool pkg-config cmake texinfo
       - name: Checkout Code
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4
       - run: ./bootstrap
       - name: Prepare libusb1
         env:
-          LIBUSB1_VER: 1.0.24
+          LIBUSB1_VER: 1.0.26
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
-          wget "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2"
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            curl -L "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2" -o "libusb-${LIBUSB1_VER}.tar.bz2"
+          else
+            wget "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2"
+          fi
           tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
           echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
       - name: Prepare hidapi
         env:
-          HIDAPI_VER: 0.10.1
+          HIDAPI_VER: 0.14.0
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
-          wget "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz"
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            curl -L "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz" -o "hidapi-${HIDAPI_VER}.tar.gz"
+          else
+            wget "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz"
+          fi
           tar -xzf hidapi-${HIDAPI_VER}.tar.gz
           cd hidapi-hidapi-${HIDAPI_VER}
           ./bootstrap
           echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
       - name: Prepare capstone
         env:
-          CAPSTONE_VER: 4.0.2
+          CAPSTONE_VER: 5.0.1
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
           CAPSTONE_NAME=${CAPSTONE_VER}
           CAPSTONE_FOLDER=capstone-${CAPSTONE_VER}
-          wget "https://github.com/aquynh/capstone/archive/${CAPSTONE_VER}.tar.gz"
-          tar -xzf ${CAPSTONE_VER}.tar.gz
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            curl -L "https://github.com/capstone-engine/capstone/archive/v${CAPSTONE_VER}.tar.gz" -o "v${CAPSTONE_VER}.tar.gz"
+          else
+            wget "https://github.com/capstone-engine/capstone/archive/v${CAPSTONE_VER}.tar.gz"
+          fi
+          tar -xzf v${CAPSTONE_VER}.tar.gz
           echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
-      - name: Package OpenOCD for windows
+      - name: Package OpenOCD for ${{ matrix.platform }} ${{ matrix.arch }}
         env:
           MAKE_JOBS: 2
-          HOST: i686-w64-mingw32
-          LIBUSB1_CONFIG: --enable-shared --disable-static
-          HIDAPI_CONFIG: --enable-shared --disable-static --disable-testgui
+          HOST: ${{ matrix.host }}
+          LIBUSB1_CONFIG: --enable-static --disable-shared
+          HIDAPI_CONFIG: --enable-static --disable-shared --disable-testgui
           CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
         run: |
           # check if there is tag pointing at HEAD, otherwise take the HEAD SHA-1 as OPENOCD_TAG
@@ -68,24 +126,92 @@ jobs:
           export OPENOCD_TAG=$OPENOCD_TAG
           export OPENOCD_SRC=$PWD
           export OPENOCD_CONFIG=""
-          mkdir -p $BUILD_DIR &&  cd $BUILD_DIR
-          bash $OPENOCD_SRC/contrib/cross-build.sh $HOST
-          # add missing dlls
-          cd $HOST-root/usr
-          cp `$HOST-gcc --print-file-name=libwinpthread-1.dll` ./bin/
-          cp `$HOST-gcc --print-file-name=libgcc_s_sjlj-1.dll` ./bin/
-          # prepare the artifact
-          ARTIFACT="openocd-${OPENOCD_TAG}-${HOST}.tar.gz"
-          tar -czf $ARTIFACT *
+          mkdir -p $BUILD_DIR && cd $BUILD_DIR
+          
+          # Handle different platforms
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            # For macOS, we need to handle both x86_64 and arm64
+            export SYSROOT=$BUILD_DIR/$HOST-root
+            export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig"
+            
+            # Build dependencies for macOS
+            # libusb1
+            if [ -d "$LIBUSB1_SRC" ]; then
+              mkdir -p $BUILD_DIR/libusb1
+              cd $BUILD_DIR/libusb1
+              CFLAGS="-arch ${{ matrix.arch }}" LDFLAGS="-arch ${{ matrix.arch }}" \
+              $LIBUSB1_SRC/configure --prefix=/usr --enable-static --disable-shared \
+                --host=$HOST
+              make -j $MAKE_JOBS
+              make install DESTDIR=$SYSROOT
+            fi
+            
+            # hidapi
+            if [ -d "$HIDAPI_SRC" ]; then
+              mkdir -p $BUILD_DIR/hidapi
+              cd $BUILD_DIR/hidapi
+              CFLAGS="-arch ${{ matrix.arch }}" LDFLAGS="-arch ${{ matrix.arch }}" \
+              $HIDAPI_SRC/configure --prefix=/usr --enable-static --disable-shared --disable-testgui \
+                --host=$HOST
+              make -j $MAKE_JOBS
+              make install DESTDIR=$SYSROOT
+            fi
+            
+            # capstone
+            if [ -d "$CAPSTONE_SRC" ]; then
+              mkdir -p $BUILD_DIR/capstone
+              cd $BUILD_DIR/capstone
+              cp -r $CAPSTONE_SRC/* .
+              CFLAGS="-arch ${{ matrix.arch }}" make install DESTDIR=$SYSROOT PREFIX=/usr \
+                CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no
+            fi
+            
+            # OpenOCD
+            mkdir -p $BUILD_DIR/openocd
+            cd $BUILD_DIR/openocd
+            PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig" \
+            CFLAGS="-arch ${{ matrix.arch }} -I$SYSROOT/usr/include" \
+            LDFLAGS="-arch ${{ matrix.arch }} -L$SYSROOT/usr/lib" \
+            $OPENOCD_SRC/configure --prefix=/usr --host=$HOST \
+              --with-sysroot=$SYSROOT $OPENOCD_CONFIG
+            make -j $MAKE_JOBS
+            make install-strip DESTDIR=$SYSROOT
+            
+            cd $SYSROOT/usr
+            ARTIFACT="openocd-${OPENOCD_TAG}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+            tar -czf $ARTIFACT *
+            echo "ARTIFACT_PATH=$PWD/$ARTIFACT" >> $GITHUB_ENV
+          else
+            # For Linux/Windows cross-compilation, use existing cross-build.sh
+            bash $OPENOCD_SRC/contrib/cross-build.sh $HOST
+            cd $HOST-root/usr
+            # add missing dlls (Windows only)
+            if [[ "${{ matrix.platform }}" == "windows" ]]; then
+              # Copy required DLLs for Windows builds
+              if [[ "${{ matrix.arch }}" == "i686" ]]; then
+                cp `$HOST-gcc --print-file-name=libwinpthread-1.dll` ./bin/ || true
+                cp `$HOST-gcc --print-file-name=libgcc_s_sjlj-1.dll` ./bin/ || true
+              else
+                cp `$HOST-gcc --print-file-name=libwinpthread-1.dll` ./bin/ || true
+                cp `$HOST-gcc --print-file-name=libgcc_s_seh-1.dll` ./bin/ || true
+              fi
+            fi
+            # prepare the artifact
+            ARTIFACT="openocd-${OPENOCD_TAG}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+            tar -czf $ARTIFACT *
+            echo "ARTIFACT_PATH=$PWD/$ARTIFACT" >> $GITHUB_ENV
+          fi
+          
           echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_ENV
           echo "IS_PRE_RELEASE=$IS_PRE_RELEASE" >> $GITHUB_ENV
-          echo "ARTIFACT_PATH=$PWD/$ARTIFACT" >> $GITHUB_ENV
-      - name: Publish OpenOCD packaged for windows
-        uses: actions/upload-artifact@v2
+      - name: Publish OpenOCD packaged for ${{ matrix.platform }} ${{ matrix.arch }}
+        uses: actions/upload-artifact@v4
         with:
+          name: openocd-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ env.ARTIFACT_PATH }}
       - name: Delete 'latest' Release
-        uses: dev-drprasad/delete-tag-and-release@v0.2.0
+        if: env.RELEASE_NAME == 'latest'
+        uses: dev-drprasad/delete-tag-and-release@v0.2.1
         with:
           delete_release: true
           tag_name: ${{ env.RELEASE_NAME }}
@@ -99,4 +225,5 @@ jobs:
           draft: false
           artifacts: ${{ env.ARTIFACT_PATH }}
           prerelease: ${{ env.IS_PRE_RELEASE }}
+          allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
