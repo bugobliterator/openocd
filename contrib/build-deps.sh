@@ -125,8 +125,8 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
         export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
         export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a"
         LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.a"
-        # Ensure static libftdi on non-Linux platforms
-        LIBFTDI_CONFIG="-DSTATICLIBS=ON -DBUILD_SHARED_LIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF"
+        # Ensure static libftdi on non-Linux platforms - remove shared libs after build
+        LIBFTDI_CONFIG="-DSTATICLIBS=ON -DEXAMPLES=OFF -DFTDI_EEPROM=OFF"
         echo "DEBUG: Overriding to static libftdi on non-Linux platform"
         echo "DEBUG: Updated LIBFTDI_CONFIG: $LIBFTDI_CONFIG"
     fi
@@ -150,6 +150,15 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
     make install DESTDIR=$SYSROOT
     echo "DEBUG: libftdi files installed:"
     find $SYSROOT -name "*ftdi*" | head -10
+    
+    # Remove shared libraries on non-Linux platforms to force static linking
+    if [ "$PLATFORM" != "linux" ]; then
+        echo "DEBUG: Removing shared libftdi libraries to force static linking"
+        rm -f $SYSROOT/usr/lib/libftdi1*.dylib
+        rm -f $SYSROOT/usr/lib/libftdi1*.so*
+        echo "DEBUG: Remaining libftdi files:"
+        find $SYSROOT -name "*ftdi*" | head -10
+    fi
     cd ..
 fi
 
