@@ -118,10 +118,12 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
         export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.so"
         LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.so"
     else
-        # Use static libusb on other platforms
+        # Use static libusb and libftdi on other platforms
         export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
         export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a"
         LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.a"
+        # Ensure static libftdi on non-Linux platforms
+        LIBFTDI_CONFIG="-DSTATICLIBS=ON -DBUILD_SHARED_LIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF"
     fi
 
     # Linux/Darwin CMake build
