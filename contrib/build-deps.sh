@@ -108,6 +108,8 @@ fi
 # Build libftdi (skip on Windows due to symbol conflicts)
 if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
     echo "Building libftdi..."
+    echo "DEBUG: Platform: $PLATFORM"
+    echo "DEBUG: Initial LIBFTDI_CONFIG: $LIBFTDI_CONFIG"
     mkdir -p libftdi && cd libftdi
     
     # Set libusb paths explicitly for CMake
@@ -117,6 +119,7 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
         export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
         export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.so"
         LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.so"
+        echo "DEBUG: Using shared libusb on Linux"
     else
         # Use static libusb and libftdi on other platforms
         export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
@@ -124,17 +127,22 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
         LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.a"
         # Ensure static libftdi on non-Linux platforms
         LIBFTDI_CONFIG="-DSTATICLIBS=ON -DBUILD_SHARED_LIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF"
+        echo "DEBUG: Overriding to static libftdi on non-Linux platform"
+        echo "DEBUG: Updated LIBFTDI_CONFIG: $LIBFTDI_CONFIG"
     fi
 
     # Linux/Darwin CMake build
-    cmake $LIBFTDI_SRC \
+    CMAKE_CMD="cmake $LIBFTDI_SRC \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DLIBUSB_INCLUDE_DIR="$SYSROOT/usr/include/libusb-1.0" \
-        -DLIBUSB_LIBRARIES="$LIBUSB_LIB" \
-        -DLIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0" \
-        -DLIBUSB_1_LIBRARIES="$LIBUSB_LIB" \
-        $LIBFTDI_CONFIG
+        -DLIBUSB_INCLUDE_DIR=\"$SYSROOT/usr/include/libusb-1.0\" \
+        -DLIBUSB_LIBRARIES=\"$LIBUSB_LIB\" \
+        -DLIBUSB_1_INCLUDE_DIRS=\"$SYSROOT/usr/include/libusb-1.0\" \
+        -DLIBUSB_1_LIBRARIES=\"$LIBUSB_LIB\" \
+        $LIBFTDI_CONFIG"
+    echo "DEBUG: Executing cmake command:"
+    echo "DEBUG: $CMAKE_CMD"
+    eval "$CMAKE_CMD"
     
     make -j $MAKE_JOBS
     make install DESTDIR=$SYSROOT
