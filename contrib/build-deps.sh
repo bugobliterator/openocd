@@ -85,6 +85,9 @@ fi
 if [ -d "$HIDAPI_SRC" ]; then
     echo "Building hidapi..."
     mkdir -p hidapi && cd hidapi
+    export CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0"
+    export LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib"
+    export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
     $HIDAPI_SRC/configure --prefix=/usr $HOST_FLAG $HIDAPI_CONFIG
     make -j $MAKE_JOBS
     make install DESTDIR=$SYSROOT
