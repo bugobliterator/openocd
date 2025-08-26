@@ -251,11 +251,9 @@ jobs:
           mkdir -p openocd && cd openocd
           export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
           CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone -I$SYSROOT/usr/include/hidapi -I$SYSROOT/usr/include/libftdi1" \
-          LDFLAGS="-static -L$SYSROOT/usr/lib" \
+          LDFLAGS="-L$SYSROOT/usr/lib" \
           $GITHUB_WORKSPACE/configure \
             --prefix=/usr \
-            --enable-static \
-            --disable-shared \
             $OPENOCD_CONFIG
           make -j $MAKE_JOBS
           make install DESTDIR=$SYSROOT
