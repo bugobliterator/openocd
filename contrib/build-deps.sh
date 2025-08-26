@@ -70,6 +70,11 @@ case "$PLATFORM" in
         HOST_FLAG=""
         # Add macOS framework flags
         export LDFLAGS="$LDFLAGS -framework CoreFoundation -framework IOKit -framework Security -framework AppKit"
+        # Override Linux shared config - ensure static libraries on macOS
+        LIBUSB1_CONFIG="--enable-static --disable-shared"
+        HIDAPI_CONFIG="--enable-static --disable-shared"
+        LIBFTDI_CONFIG="-DSTATICLIBS=ON -DBUILD_SHARED_LIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF"
+        LIBJAYLINK_CONFIG="--enable-static --disable-shared"
         ;;
 esac
 
