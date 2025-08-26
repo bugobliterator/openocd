@@ -13,7 +13,7 @@ MAKE_JOBS="${MAKE_JOBS:-2}"
 
 # Configuration defaults
 LIBUSB1_CONFIG="${LIBUSB1_CONFIG:---enable-static --disable-shared}"
-HIDAPI_CONFIG="${HIDAPI_CONFIG:---enable-static --disable-shared}"
+HIDAPI_CONFIG="${HIDAPI_CONFIG:---enable-static --disable-shared HIDAPI_BUILD_HIDTEST=FALSE HIDAPI_WITH_TESTS=FALSE}"
 LIBFTDI_CONFIG="${LIBFTDI_CONFIG:--DSTATICLIBS=ON -DBUILD_SHARED_LIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF}"
 CAPSTONE_CONFIG="${CAPSTONE_CONFIG:-CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no}"
 LIBJAYLINK_CONFIG="${LIBJAYLINK_CONFIG:---enable-static --disable-shared}"
@@ -89,8 +89,7 @@ if [ -d "$HIDAPI_SRC" ]; then
     export LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib"
     export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
     $HIDAPI_SRC/configure --prefix=/usr $HOST_FLAG $HIDAPI_CONFIG
-    make -j $MAKE_JOBS -C linux
-    make -j $MAKE_JOBS -C libusb
+    make -j $MAKE_JOBS libs || make -j $MAKE_JOBS
     make install DESTDIR=$SYSROOT
     rm -f $SYSROOT/usr/lib/*.la
     cd ..
