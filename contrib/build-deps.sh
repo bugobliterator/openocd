@@ -89,7 +89,8 @@ if [ -d "$HIDAPI_SRC" ]; then
     export LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib"
     export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
     $HIDAPI_SRC/configure --prefix=/usr $HOST_FLAG $HIDAPI_CONFIG
-    make -j $MAKE_JOBS
+    make -j $MAKE_JOBS -C linux
+    make -j $MAKE_JOBS -C libusb
     make install DESTDIR=$SYSROOT
     rm -f $SYSROOT/usr/lib/*.la
     cd ..
