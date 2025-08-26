@@ -145,7 +145,11 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
     eval "$CMAKE_CMD"
     
     make -j $MAKE_JOBS
+    echo "DEBUG: libftdi build files created:"
+    find . -name "*.so*" -o -name "*.dylib*" -o -name "*.a" | head -10
     make install DESTDIR=$SYSROOT
+    echo "DEBUG: libftdi files installed:"
+    find $SYSROOT -name "*ftdi*" | head -10
     cd ..
 fi
 
