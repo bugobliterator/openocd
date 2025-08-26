@@ -107,17 +107,26 @@ if [ -d "$LIBFTDI_SRC" ] && [ "$PLATFORM" != "windows" ]; then
     
     # Set libusb paths explicitly for CMake
     export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/pkgconfig"
-    export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
-    export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a"
+    if [ "$PLATFORM" = "linux" ]; then
+        # Use shared libusb on Linux
+        export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
+        export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.so"
+        LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.so"
+    else
+        # Use static libusb on other platforms
+        export LIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0"
+        export LIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a"
+        LIBUSB_LIB="$SYSROOT/usr/lib/libusb-1.0.a"
+    fi
 
     # Linux/Darwin CMake build
     cmake $LIBFTDI_SRC \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DLIBUSB_INCLUDE_DIR="$SYSROOT/usr/include/libusb-1.0" \
-        -DLIBUSB_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a" \
+        -DLIBUSB_LIBRARIES="$LIBUSB_LIB" \
         -DLIBUSB_1_INCLUDE_DIRS="$SYSROOT/usr/include/libusb-1.0" \
-        -DLIBUSB_1_LIBRARIES="$SYSROOT/usr/lib/libusb-1.0.a" \
+        -DLIBUSB_1_LIBRARIES="$LIBUSB_LIB" \
         $LIBFTDI_CONFIG
     
     make -j $MAKE_JOBS
