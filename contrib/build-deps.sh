@@ -51,6 +51,8 @@ case "$PLATFORM" in
         export CFLAGS=""
         export CXXFLAGS=""
         export LDFLAGS=""
+        # Use shared libusb on Linux
+        LIBUSB1_CONFIG="--enable-shared --disable-static"
         ;;
     darwin)
         if [[ "$HOST" == *"arm64"* ]]; then
