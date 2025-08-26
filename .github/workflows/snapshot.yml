@@ -65,57 +65,49 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
       - run: ./bootstrap
-      - name: Prepare libusb1
+      - name: Prepare all dependencies
         env:
           LIBUSB1_VER: 1.0.26
+          HIDAPI_VER: 0.13.1
+          LIBFTDI_VER: 1.5
+          CAPSTONE_VER: 4.0.2
+          LIBJAYLINK_VER: 0.3.1
+          JIMTCL_VER: 0.83
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
+          
+          # Download libusb1
           wget "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2"
           tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
           echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
-      - name: Prepare hidapi
-        env:
-          HIDAPI_VER: 0.13.1
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
+          
+          # Download hidapi
           wget "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz"
           tar -xzf hidapi-${HIDAPI_VER}.tar.gz
           cd hidapi-hidapi-${HIDAPI_VER}
           ./bootstrap
           echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
-      - name: Prepare libftdi
-        env:
-          LIBFTDI_VER: 1.5
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
+          cd ..
+          
+          # Download libftdi
           wget "http://www.intra2net.com/en/developer/libftdi/download/libftdi1-${LIBFTDI_VER}.tar.bz2"
           tar -xjf libftdi1-${LIBFTDI_VER}.tar.bz2
           echo "LIBFTDI_SRC=$PWD/libftdi1-${LIBFTDI_VER}" >> $GITHUB_ENV
-      - name: Prepare capstone
-        env:
-          CAPSTONE_VER: 4.0.2
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
-          CAPSTONE_NAME=${CAPSTONE_VER}
-          CAPSTONE_FOLDER=capstone-${CAPSTONE_VER}
-          wget "https://github.com/aquynh/capstone/archive/${CAPSTONE_VER}.tar.gz"
+          
+          # Download capstone
+          wget "https://github.com/capstone-engine/capstone/archive/${CAPSTONE_VER}.tar.gz"
           tar -xzf ${CAPSTONE_VER}.tar.gz
           echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
-      - name: Prepare libjaylink
-        env:
-          LIBJAYLINK_VER: 0.3.1
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
-          wget https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz
+          
+          # Download libjaylink
+          wget --no-check-certificate https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz
           tar -xzf libjaylink-${LIBJAYLINK_VER}.tar.gz
           cd libjaylink-${LIBJAYLINK_VER}
           ./autogen.sh
           echo "LIBJAYLINK_SRC=$PWD" >> $GITHUB_ENV
-      - name: Prepare jimtcl
-        env:
-          JIMTCL_VER: 0.83
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
+          cd ..
+          
+          # Download jimtcl
           wget https://github.com/msteveb/jimtcl/archive/refs/tags/${JIMTCL_VER}.tar.gz
           tar -xzf ${JIMTCL_VER}.tar.gz
           echo "JIMTCL_SRC=$PWD/jimtcl-${JIMTCL_VER}" >> $GITHUB_ENV
@@ -123,23 +115,41 @@ jobs:
         env:
           MAKE_JOBS: 2
           HOST: ${{ matrix.host }}
-          LIBUSB1_CONFIG: --enable-shared --disable-static
-          LIBFTDI_CONFIG: -DSTATICLIBS=OFF -DEXAMPLES=OFF -DFTDI_EEPROM=OFF
+          LIBUSB1_CONFIG: --enable-static --disable-shared
           CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
           LIBJAYLINK_CONFIG: --enable-static --disable-shared
           JIMTCL_CONFIG: --with-ext=json --minimal --disable-ssl
+          OPENOCD_CONFIG: "--enable-stlink --enable-jlink --enable-cmsis-dap --enable-usbprog --enable-vsllink --enable-ti-icdi --enable-opendous --enable-osbdm --enable-aice --enable-usb-blaster-2 --enable-ft232r --enable-vsllink --enable-xds110 --enable-ulink --enable-arm-jtag-ew --enable-nulink"
         run: |
-          # set env and call cross-build.sh
-          export OPENOCD_TAG=$OPENOCD_TAG
-          export OPENOCD_SRC=$PWD
-          export OPENOCD_CONFIG="--enable-ftdi --enable-stlink --enable-jlink --enable-cmsis-dap --enable-usbprog --enable-vsllink --enable-ti-icdi --enable-opendous --enable-osbdm --enable-presto --enable-aice --enable-usb-blaster-2 --enable-ft232r --enable-vsllink --enable-xds110 --enable-ulink --enable-arm-jtag-ew"
-          mkdir -p $BUILD_DIR &&  cd $BUILD_DIR
-          bash $OPENOCD_SRC/contrib/cross-build.sh $HOST
-          # add missing dlls for static builds (if needed)
-          cd $HOST-root/usr
-          # For static builds, we may still need some runtime DLLs
+          # Create build structure
+          mkdir -p $BUILD_DIR && cd $BUILD_DIR
+          BUILD_DIR_ABS="$(pwd)"
+          SYSROOT="$BUILD_DIR_ABS/sysroot"
+          export SYSROOT
+          
+          # Build all dependencies using shared script
+          bash $GITHUB_WORKSPACE/contrib/build-deps.sh windows $HOST
+          
+          # Build OpenOCD with static dependencies
+          mkdir -p openocd && cd openocd
+          export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
+          CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone -I$SYSROOT/usr/include/hidapi" \
+          LDFLAGS="-static-libgcc -static-libstdc++ -L$SYSROOT/usr/lib" \
+          LIBS="-lusb-1.0" \
+          $GITHUB_WORKSPACE/configure \
+            --host=$HOST \
+            --prefix=/usr \
+            --enable-static \
+            --disable-shared \
+            $OPENOCD_CONFIG
+          make -j $MAKE_JOBS
+          make install DESTDIR=$SYSROOT
+          
+          # add missing dlls for runtime (minimal set)
+          cd $SYSROOT/usr
           cp `$HOST-gcc --print-file-name=libwinpthread-1.dll` ./bin/ || true
           cp `$HOST-gcc --print-file-name=libgcc_s_${{ matrix.dll_suffix }}-1.dll` ./bin/ || true
+          
           # prepare the artifact
           ARTIFACT="openocd-${OPENOCD_TAG}-windows-${{ matrix.arch }}.tar.gz"
           tar -czf $ARTIFACT *
@@ -156,12 +166,10 @@ jobs:
     needs: prepare-release-info
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        arch: [x86_64]
         include:
           - arch: x86_64
             host: x86_64-linux-gnu
-          - arch: aarch64
-            host: aarch64-linux-gnu
     env:
       DL_DIR: ../downloads
       BUILD_DIR: ../build
@@ -171,73 +179,52 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install autotools-dev autoconf automake libtool pkg-config cmake texinfo texlive libjim-dev libudev-dev
-          if [[ "${{ matrix.arch }}" == "aarch64" ]]; then
-            sudo dpkg --add-architecture arm64
-            # Configure sources to prevent arm64 package conflicts
-            echo "DEBUG: Before modifications:"
-            find /etc/apt/sources.list.d/ -name "*.sources" -exec echo "File: {}" \; -exec cat {} \;
-            # Completely disable Ubuntu default sources and create clean setup
-            sudo find /etc/apt/sources.list.d/ -name "*.sources" -exec sudo mv {} {}.disabled \;
-            # Create clean sources manually
-            sudo tee /etc/apt/sources.list.d/ubuntu-amd64.sources <<'EOF'
-          Types: deb
-          URIs: http://archive.ubuntu.com/ubuntu
-          Suites: noble noble-updates
-          Components: main universe
-          Architectures: amd64
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-          Types: deb
-          URIs: http://security.ubuntu.com/ubuntu  
-          Suites: noble-security
-          Components: main universe
-          Architectures: amd64
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-            # Add ports.ubuntu.com for arm64 packages only
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe multiverse restricted" | sudo tee /etc/apt/sources.list.d/arm64.list
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe multiverse restricted" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main universe multiverse restricted" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-            sudo apt-get update
-            sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            sudo apt-get install libc6-dev-arm64-cross libudev-dev:arm64
-          fi
       - name: Checkout Code
         uses: actions/checkout@v4
       - run: ./bootstrap
-      - name: Prepare libusb1
+      - name: Prepare all dependencies
         env:
           LIBUSB1_VER: 1.0.26
+          HIDAPI_VER: 0.13.1
+          LIBFTDI_VER: 1.5
+          CAPSTONE_VER: 4.0.2
+          LIBJAYLINK_VER: 0.3.1
+          JIMTCL_VER: 0.83
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
+          
+          # Download libusb1
           wget "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2"
           tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
           echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
-      - name: Prepare capstone
-        env:
-          CAPSTONE_VER: 4.0.2
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
-          CAPSTONE_NAME=${CAPSTONE_VER}
-          CAPSTONE_FOLDER=capstone-${CAPSTONE_VER}
-          wget "https://github.com/aquynh/capstone/archive/${CAPSTONE_VER}.tar.gz"
+          
+          # Download hidapi
+          wget "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz"
+          tar -xzf hidapi-${HIDAPI_VER}.tar.gz
+          cd hidapi-hidapi-${HIDAPI_VER}
+          ./bootstrap
+          echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
+          cd ..
+          
+          # Download libftdi
+          wget "http://www.intra2net.com/en/developer/libftdi/download/libftdi1-${LIBFTDI_VER}.tar.bz2"
+          tar -xjf libftdi1-${LIBFTDI_VER}.tar.bz2
+          echo "LIBFTDI_SRC=$PWD/libftdi1-${LIBFTDI_VER}" >> $GITHUB_ENV
+          
+          # Download capstone
+          wget "https://github.com/capstone-engine/capstone/archive/${CAPSTONE_VER}.tar.gz"
           tar -xzf ${CAPSTONE_VER}.tar.gz
           echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
-      - name: Prepare libjaylink
-        env:
-          LIBJAYLINK_VER: 0.3.1
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
-          wget https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz
+          
+          # Download libjaylink
+          wget --no-check-certificate https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz
           tar -xzf libjaylink-${LIBJAYLINK_VER}.tar.gz
           cd libjaylink-${LIBJAYLINK_VER}
           ./autogen.sh
           echo "LIBJAYLINK_SRC=$PWD" >> $GITHUB_ENV
-      - name: Prepare jimtcl
-        env:
-          JIMTCL_VER: 0.83
-        run: |
-          mkdir -p $DL_DIR && cd $DL_DIR
+          cd ..
+          
+          # Download jimtcl
           wget https://github.com/msteveb/jimtcl/archive/refs/tags/${JIMTCL_VER}.tar.gz
           tar -xzf ${JIMTCL_VER}.tar.gz
           echo "JIMTCL_SRC=$PWD/jimtcl-${JIMTCL_VER}" >> $GITHUB_ENV
@@ -249,17 +236,32 @@ jobs:
           CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
           LIBJAYLINK_CONFIG: --enable-static --disable-shared
           JIMTCL_CONFIG: --with-ext=json --minimal --disable-ssl
-          OPENOCD_CONFIG: "--enable-ftdi --enable-stlink --enable-jlink --enable-cmsis-dap-v2 --enable-usbprog --enable-vsllink --enable-ti-icdi --enable-opendous --enable-osbdm --enable-aice --enable-usb-blaster-2 --enable-ft232r --enable-vsllink --enable-xds110 --enable-ulink --enable-arm-jtag-ew"
+          OPENOCD_CONFIG: "--enable-stlink --enable-jlink --enable-cmsis-dap-v2 --enable-usbprog --enable-vsllink --enable-ti-icdi --enable-opendous --enable-osbdm --enable-aice --enable-usb-blaster-2 --enable-ft232r --enable-vsllink --enable-xds110 --enable-ulink --enable-arm-jtag-ew"
         run: |
-          # set env and call cross-build.sh
-          export OPENOCD_TAG=$OPENOCD_TAG
-          export OPENOCD_SRC=$PWD
+          # Create build structure
           mkdir -p $BUILD_DIR && cd $BUILD_DIR
+          BUILD_DIR_ABS="$(pwd)"
+          SYSROOT="$BUILD_DIR_ABS/sysroot"
+          export SYSROOT
           
-          bash $OPENOCD_SRC/contrib/cross-build.sh $HOST
+          # Build all dependencies using shared script
+          bash $GITHUB_WORKSPACE/contrib/build-deps.sh linux $HOST
+          
+          # Build OpenOCD with static dependencies
+          mkdir -p openocd && cd openocd
+          export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
+          CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone -I$SYSROOT/usr/include/hidapi -I$SYSROOT/usr/include/libftdi1" \
+          LDFLAGS="-static -L$SYSROOT/usr/lib" \
+          $GITHUB_WORKSPACE/configure \
+            --prefix=/usr \
+            --enable-static \
+            --disable-shared \
+            $OPENOCD_CONFIG
+          make -j $MAKE_JOBS
+          make install DESTDIR=$SYSROOT
           
           # prepare the artifact
-          cd $HOST-root/usr
+          cd $SYSROOT/usr
           ARTIFACT="openocd-${OPENOCD_TAG}-linux-${{ matrix.arch }}.tar.gz"
           tar -czf $ARTIFACT *
           echo "LINUX_ARTIFACT_PATH=$PWD/$ARTIFACT" >> $GITHUB_ENV
@@ -296,6 +298,8 @@ jobs:
       - name: Prepare dependencies
         env:
           LIBUSB1_VER: 1.0.26
+          HIDAPI_VER: 0.13.1
+          LIBFTDI_VER: 1.5
           CAPSTONE_VER: 4.0.2
           LIBJAYLINK_VER: 0.3.1
           JIMTCL_VER: 0.83
@@ -308,13 +312,26 @@ jobs:
           tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
           echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
           
+          # Download hidapi
+          curl -L "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz" -o "hidapi-${HIDAPI_VER}.tar.gz"
+          tar -xzf hidapi-${HIDAPI_VER}.tar.gz
+          cd hidapi-hidapi-${HIDAPI_VER}
+          ./bootstrap
+          echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
+          cd ..
+          
+          # Download libftdi
+          curl -L "http://www.intra2net.com/en/developer/libftdi/download/libftdi1-${LIBFTDI_VER}.tar.bz2" -o "libftdi1-${LIBFTDI_VER}.tar.bz2"
+          tar -xjf libftdi1-${LIBFTDI_VER}.tar.bz2
+          echo "LIBFTDI_SRC=$PWD/libftdi1-${LIBFTDI_VER}" >> $GITHUB_ENV
+          
           # Download capstone
           curl -L "https://github.com/capstone-engine/capstone/archive/${CAPSTONE_VER}.tar.gz" -o "${CAPSTONE_VER}.tar.gz"
           tar -xzf ${CAPSTONE_VER}.tar.gz
           echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
           
           # Download libjaylink
-          curl -L "https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz" -o "libjaylink-${LIBJAYLINK_VER}.tar.gz"
+          curl -L -k "https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz" -o "libjaylink-${LIBJAYLINK_VER}.tar.gz"
           tar -xzf libjaylink-${LIBJAYLINK_VER}.tar.gz
           cd libjaylink-${LIBJAYLINK_VER}
           ./autogen.sh
@@ -338,78 +355,27 @@ jobs:
           ./bootstrap
           
           # Create build structure
-          mkdir -p $BUILD_DIR
-          cd $BUILD_DIR
+          mkdir -p $BUILD_DIR && cd $BUILD_DIR
           BUILD_DIR_ABS="$(pwd)"
           SYSROOT="$BUILD_DIR_ABS/sysroot"
-          mkdir -p $SYSROOT/usr
+          export SYSROOT
           
-          # Set architecture-specific flags
-          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
-            export CFLAGS="-arch arm64"
-            export CXXFLAGS="-arch arm64"
-            export LDFLAGS="-arch arm64"
-          else
-            export CFLAGS="-arch x86_64"
-            export CXXFLAGS="-arch x86_64"
-            export LDFLAGS="-arch x86_64"
-          fi
-          
-          export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
-          
-          # Build libusb1
-          if [ -d "$LIBUSB1_SRC" ]; then
-            mkdir -p libusb1 && cd libusb1
-            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
-            $LIBUSB1_SRC/configure --prefix=/usr $LIBUSB1_CONFIG
-            make -j $MAKE_JOBS
-            make install DESTDIR=$SYSROOT
-            # Remove libtool archives to prevent path issues
-            rm -f $SYSROOT/usr/lib/*.la
-            cd ..
-          fi
-          
-          # Build capstone
-          if [ -d "$CAPSTONE_SRC" ]; then
-            mkdir -p capstone && cd capstone
-            cp -r $CAPSTONE_SRC/* .
-            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
-            make install DESTDIR=$SYSROOT PREFIX=/usr $CAPSTONE_CONFIG
-            cd ..
-          fi
-          
-          # Build libjaylink
-          if [ -d "$LIBJAYLINK_SRC" ]; then
-            mkdir -p libjaylink && cd libjaylink
-            
-            # Set environment for libjaylink build with explicit libusb paths
-            export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
-            export CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 $CFLAGS"
-            export LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib"
-            
-            $LIBJAYLINK_SRC/configure --prefix=/usr $LIBJAYLINK_CONFIG
-            make -j $MAKE_JOBS
-            make install DESTDIR=$SYSROOT
-            # Remove libtool archives to prevent path issues
-            rm -f $SYSROOT/usr/lib/*.la
-            cd ..
-          fi
-          
-          # Build jimtcl
-          if [ -d "$JIMTCL_SRC" ]; then
-            mkdir -p jimtcl && cd jimtcl
-            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
-            $JIMTCL_SRC/configure --prefix=/usr $JIMTCL_CONFIG
-            make -j $MAKE_JOBS
-            make install DESTDIR=$SYSROOT
-            cd ..
-          fi
+          # Build all dependencies using shared script
+          bash $GITHUB_WORKSPACE/contrib/build-deps.sh darwin ${{ matrix.arch }}-darwin
           
           # Build OpenOCD
           mkdir -p openocd && cd openocd
-          PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig" \
-          CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone" \
-          LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib -framework CoreFoundation -framework IOKit -framework Security" \
+          export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
+          
+          # Set architecture-specific flags
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            ARCH_FLAGS="-arch arm64"
+          else
+            ARCH_FLAGS="-arch x86_64"
+          fi
+          
+          CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone -I$SYSROOT/usr/include/hidapi -I$SYSROOT/usr/include/libftdi1" \
+          LDFLAGS="$ARCH_FLAGS -L$SYSROOT/usr/lib -framework CoreFoundation -framework IOKit -framework Security -framework AppKit" \
           $GITHUB_WORKSPACE/configure \
             --prefix=/usr \
             --enable-static \
