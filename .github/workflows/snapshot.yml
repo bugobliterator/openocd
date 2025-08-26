@@ -287,50 +287,139 @@ jobs:
       - name: Install needed packages with Homebrew
         run: |
           brew update
-          # Install build tools
-          brew install autoconf automake libtool pkg-config texinfo
-          
-          # Install dependencies via Homebrew instead of manually building them
-          brew install libusb hidapi libftdi capstone
-          
-          # Install optional dependencies
-          brew install libusb-compat jimtcl
+          # Install build tools only - we'll build dependencies from source
+          brew install autoconf automake libtool pkg-config texinfo cmake
 
       - name: Checkout Code
         uses: actions/checkout@v4
         
-      - name: Bootstrap and Configure
+      - name: Prepare dependencies
+        env:
+          LIBUSB1_VER: 1.0.26
+          CAPSTONE_VER: 4.0.2
+          LIBJAYLINK_VER: 0.3.1
+          JIMTCL_VER: 0.83
+          DL_DIR: ../downloads
+        run: |
+          mkdir -p $DL_DIR && cd $DL_DIR
+          
+          # Download libusb1
+          curl -L "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2" -o "libusb-${LIBUSB1_VER}.tar.bz2"
+          tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
+          echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
+          
+          # Download capstone
+          curl -L "https://github.com/capstone-engine/capstone/archive/${CAPSTONE_VER}.tar.gz" -o "${CAPSTONE_VER}.tar.gz"
+          tar -xzf ${CAPSTONE_VER}.tar.gz
+          echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
+          
+          # Download libjaylink
+          curl -L "https://gitlab.zapb.de/libjaylink/libjaylink/-/archive/${LIBJAYLINK_VER}/libjaylink-${LIBJAYLINK_VER}.tar.gz" -o "libjaylink-${LIBJAYLINK_VER}.tar.gz"
+          tar -xzf libjaylink-${LIBJAYLINK_VER}.tar.gz
+          cd libjaylink-${LIBJAYLINK_VER}
+          ./autogen.sh
+          echo "LIBJAYLINK_SRC=$PWD" >> $GITHUB_ENV
+          cd ..
+          
+          # Download jimtcl
+          curl -L "https://github.com/msteveb/jimtcl/archive/refs/tags/${JIMTCL_VER}.tar.gz" -o "${JIMTCL_VER}.tar.gz"
+          tar -xzf ${JIMTCL_VER}.tar.gz
+          echo "JIMTCL_SRC=$PWD/jimtcl-${JIMTCL_VER}" >> $GITHUB_ENV
+      
+      - name: Build dependencies and OpenOCD
+        env:
+          MAKE_JOBS: 4
+          LIBUSB1_CONFIG: --enable-static --disable-shared
+          CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
+          LIBJAYLINK_CONFIG: --enable-static --disable-shared
+          JIMTCL_CONFIG: --with-ext=json --minimal --disable-ssl
+          OPENOCD_CONFIG: "--enable-stlink --disable-amtjtagaccel"
         run: |
           ./bootstrap
           
-          # Create build directory
-          mkdir -p $BUILD_DIR && cd $BUILD_DIR
-          # get absolute path to the build directory $BUILD_DIR
-          BUILD_DIR_ABS="$(cd $BUILD_DIR && pwd)"
-          
-          # Set PKG_CONFIG_PATH to include Homebrew paths
-          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
-          
-          # Set CPPFLAGS and LDFLAGS for Homebrew dependencies
-          export CPPFLAGS="-I$(brew --prefix)/include"
-          export LDFLAGS="-L$(brew --prefix)/lib"
-          
-          # Configure with static linking and paths to Homebrew libraries
-          $GITHUB_WORKSPACE/configure \
-            --prefix=$BUILD_DIR_ABS/root/usr \
-            --enable-stlink \
-            --disable-amtjtagaccel \
-            --enable-static \
-            --disable-shared
-      
-      - name: Build and Install
-        run: |
+          # Create build structure
+          mkdir -p $BUILD_DIR
           cd $BUILD_DIR
-          make -j$(sysctl -n hw.ncpu)
-          make install
+          BUILD_DIR_ABS="$(pwd)"
+          SYSROOT="$BUILD_DIR_ABS/sysroot"
+          mkdir -p $SYSROOT/usr
+          
+          # Set architecture-specific flags
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            export CFLAGS="-arch arm64"
+            export CXXFLAGS="-arch arm64"
+            export LDFLAGS="-arch arm64"
+          else
+            export CFLAGS="-arch x86_64"
+            export CXXFLAGS="-arch x86_64"
+            export LDFLAGS="-arch x86_64"
+          fi
+          
+          export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
+          
+          # Build libusb1
+          if [ -d "$LIBUSB1_SRC" ]; then
+            mkdir -p libusb1 && cd libusb1
+            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
+            $LIBUSB1_SRC/configure --prefix=/usr $LIBUSB1_CONFIG
+            make -j $MAKE_JOBS
+            make install DESTDIR=$SYSROOT
+            # Remove libtool archives to prevent path issues
+            rm -f $SYSROOT/usr/lib/*.la
+            cd ..
+          fi
+          
+          # Build capstone
+          if [ -d "$CAPSTONE_SRC" ]; then
+            mkdir -p capstone && cd capstone
+            cp -r $CAPSTONE_SRC/* .
+            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
+            make install DESTDIR=$SYSROOT PREFIX=/usr $CAPSTONE_CONFIG
+            cd ..
+          fi
+          
+          # Build libjaylink
+          if [ -d "$LIBJAYLINK_SRC" ]; then
+            mkdir -p libjaylink && cd libjaylink
+            
+            # Set environment for libjaylink build with explicit libusb paths
+            export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig"
+            export CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 $CFLAGS"
+            export LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib"
+            
+            $LIBJAYLINK_SRC/configure --prefix=/usr $LIBJAYLINK_CONFIG
+            make -j $MAKE_JOBS
+            make install DESTDIR=$SYSROOT
+            # Remove libtool archives to prevent path issues
+            rm -f $SYSROOT/usr/lib/*.la
+            cd ..
+          fi
+          
+          # Build jimtcl
+          if [ -d "$JIMTCL_SRC" ]; then
+            mkdir -p jimtcl && cd jimtcl
+            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
+            $JIMTCL_SRC/configure --prefix=/usr $JIMTCL_CONFIG
+            make -j $MAKE_JOBS
+            make install DESTDIR=$SYSROOT
+            cd ..
+          fi
+          
+          # Build OpenOCD
+          mkdir -p openocd && cd openocd
+          PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig" \
+          CPPFLAGS="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/libusb-1.0 -I$SYSROOT/usr/include/capstone" \
+          LDFLAGS="$LDFLAGS -L$SYSROOT/usr/lib -framework CoreFoundation -framework IOKit -framework Security" \
+          $GITHUB_WORKSPACE/configure \
+            --prefix=/usr \
+            --enable-static \
+            --disable-shared \
+            $OPENOCD_CONFIG
+          make -j $MAKE_JOBS
+          make install DESTDIR=$SYSROOT
           
           # Prepare the artifact
-          cd root/usr
+          cd $SYSROOT/usr
           ARTIFACT="openocd-${OPENOCD_TAG}-darwin-${{ matrix.arch }}.tar.gz"
           tar -czf $ARTIFACT *
           
